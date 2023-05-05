@@ -24,7 +24,7 @@ cleaned_df['artist_key'] = cleaned_df['artist_key'].cat.set_categories(artists_o
 cleaned_df = cleaned_df.sort_values(by=['artist_key'],ascending=False)
 unique_df = cleaned_df.drop_duplicates(subset=['lyrics'],keep='first')
 unique_df['lyrics'] = unique_df['lyrics'].map(lambda l: ast.literal_eval(l))
-k = 50
+k = 100
 counts = unique_df['artist'].value_counts()
 artists = counts[counts >= k].index
 artists_to_remove = counts[counts < k].index
