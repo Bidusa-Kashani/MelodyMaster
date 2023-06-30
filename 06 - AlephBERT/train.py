@@ -4,13 +4,17 @@ import numpy as np
 import pandas as pd
 import torch
 from datasets import Dataset, ClassLabel
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, top_k_accuracy_score
 from sklearn.model_selection import train_test_split
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, TrainingArguments, Trainer, AdamW, \
     get_linear_schedule_with_warmup, default_data_collator, EarlyStoppingCallback
 
 warnings.filterwarnings("ignore")
+np.random.seed(42)
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+df = pd.read_csv("train.csv")
 
 def tokenize(batch):
     tokens = alephbert_tokenizer(batch['lyrics'], padding=True, truncation=True, max_length=512)
@@ -21,21 +25,17 @@ def tokenize(batch):
 def compute_metrics(pred):
     labels = pred.label_ids
     preds = pred.predictions.argmax(-1)
+
     return {
-        # 'loss': None,
-        'accuracy': accuracy_score(labels, preds),
+        'top_1_accuracy': accuracy_score(labels, preds),
+        'top_5_accuracy': top_k_accuracy_score(labels, pred.predictions, k=5),
         'precision': precision_score(labels, preds, average='macro'),
         'recall': recall_score(labels, preds, average='macro'),
         'f1_macro': f1_score(labels, preds, average='macro'),
-        'f1_weighted': f1_score(labels, preds, average='weighted')
+        'f1_weighted': f1_score(labels, preds, average='weighted'),
     }
 
 
-np.random.seed(42)
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-df = pd.read_csv("train.csv")
 
 lyricists = df['lyricist'].to_list()
 lyrics = df['lyrics'].to_list()
@@ -76,18 +76,18 @@ args = TrainingArguments(
     do_eval=True,
     evaluation_strategy="epoch",
     save_strategy="epoch",
-    eval_steps=50,
-    save_steps=50,
-    logging_steps=50,
+    eval_steps=10,
+    save_steps=100,
+    logging_steps=10,
     save_total_limit=5,
     load_best_model_at_end=True,
     metric_for_best_model="f1_weighted",
-    num_train_epochs=100,
+    num_train_epochs=1000,
     per_device_train_batch_size=32,
     per_device_eval_batch_size=16,
     learning_rate=5e-5,
     weight_decay=0.01,
-    warmup_steps=int(1e3),
+    warmup_ratio=0.1,
     logging_dir="logs",
     fp16=True,
     seed=42,
@@ -106,7 +106,7 @@ trainer = Trainer(
     data_collator=default_data_collator,
     optimizers=(optimizer, lr_scheduler),
     compute_metrics=compute_metrics,
-    callbacks=[EarlyStoppingCallback(early_stopping_patience=20)]
+    #callbacks=[EarlyStoppingCallback(early_stopping_patience=1000)]
 )
 
 trainer.train()
