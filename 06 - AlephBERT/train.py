@@ -1,11 +1,37 @@
+import warnings
+
 import numpy as np
 import pandas as pd
 import torch
-from datasets import Dataset
+from datasets import Dataset, ClassLabel
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from sklearn.model_selection import train_test_split
-from torch.optim import AdamW
-from transformers import AutoModelForSequenceClassification, AutoTokenizer, Trainer, TrainingArguments, \
-    get_linear_schedule_with_warmup, default_data_collator
+from transformers import AutoModelForSequenceClassification, AutoTokenizer, TrainingArguments, Trainer, AdamW, \
+    get_linear_schedule_with_warmup, default_data_collator, EarlyStoppingCallback
+
+warnings.filterwarnings("ignore")
+
+
+def tokenize(batch):
+    tokens = alephbert_tokenizer(batch['lyrics'], padding=True, truncation=True, max_length=512)
+    tokens['labels'] = labels.str2int(batch['lyricist'])
+    return tokens
+
+
+def compute_metrics(pred):
+    labels = pred.label_ids
+    preds = pred.predictions.argmax(-1)
+    return {
+        # 'loss': None,
+        'accuracy': accuracy_score(labels, preds),
+        'precision': precision_score(labels, preds, average='macro'),
+        'recall': recall_score(labels, preds, average='macro'),
+        'f1_macro': f1_score(labels, preds, average='macro'),
+        'f1_weighted': f1_score(labels, preds, average='weighted')
+    }
+
+
+np.random.seed(42)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -18,39 +44,51 @@ X_train, X_val, y_train, y_val = train_test_split(lyrics, lyricists, test_size=0
 train_df = pd.DataFrame(np.c_[X_train, y_train], columns=['lyrics', 'lyricist'])
 val_df = pd.DataFrame(np.c_[X_val, y_val], columns=['lyrics', 'lyricist'])
 
-#train_df['lyrics'] = train_df['lyrics'].apply(lambda x: ' '.join(x.split()[:512]))
-#val_df['lyrics'] = val_df['lyrics'].apply(lambda x: ' '.join(x.split()[:512]))
-
+labels = ClassLabel(names=df["lyricist"].unique().tolist())
 train_dataset = Dataset.from_pandas(train_df)
 val_dataset = Dataset.from_pandas(val_df)
 
 alephbert_tokenizer = AutoTokenizer.from_pretrained('onlplab/alephbert-base')
 alephbert = AutoModelForSequenceClassification.from_pretrained("onlplab/alephbert-base",
-                                                               num_labels=len(df["lyricist"].unique()))
-alephbert.config.id2label = {i: label for i, label in enumerate(df["lyricist"].unique())}
-alephbert.config.label2id = {label: i for i, label in enumerate(df["lyricist"].unique())}
+                                                               num_labels=len(df["lyricist"].unique()),
+                                                               id2label={i: label for i, label in
+                                                                         enumerate(labels.names)},
+                                                               label2id={label: i for i, label in
+                                                                         enumerate(labels.names)})
 
-# TODO: set freezed / non-freezed layers
-# alephbert.classifier.out_features = len(df['lyricist'].unique())
+train_dataset = train_dataset.map(tokenize, batched=True)
+val_dataset = val_dataset.map(tokenize, batched=True)
+
+train_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'])
+val_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'])
+
 for p in alephbert.bert.embeddings.parameters():
     p.requires_grad = False
 
-print(alephbert)
+for p in alephbert.bert.encoder.layer[:8].parameters():
+    p.requires_grad = False
+
+alephbert.to(device)
+
 args = TrainingArguments(
     "output",
-    evaluation_strategy="steps",
-    eval_steps=10,
-    save_steps=100,
+    do_train=True,
+    do_eval=True,
+    evaluation_strategy="epoch",
+    save_strategy="epoch",
+    eval_steps=50,
+    save_steps=50,
+    logging_steps=50,
     save_total_limit=5,
     load_best_model_at_end=True,
-    num_train_epochs=10,
-    per_device_train_batch_size=16,
-    per_device_eval_batch_size=8,
-    learning_rate=1e-3,
+    metric_for_best_model="f1_weighted",
+    num_train_epochs=100,
+    per_device_train_batch_size=32,
+    per_device_eval_batch_size=16,
+    learning_rate=5e-5,
     weight_decay=0.01,
     warmup_steps=int(1e3),
     logging_dir="logs",
-    logging_steps=100,
     fp16=True,
     seed=42,
 )
@@ -58,7 +96,6 @@ args = TrainingArguments(
 optimizer = AdamW(alephbert.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
 lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps,
                                                num_training_steps=args.max_steps)
-
 
 trainer = Trainer(
     model=alephbert,
@@ -68,6 +105,8 @@ trainer = Trainer(
     tokenizer=alephbert_tokenizer,
     data_collator=default_data_collator,
     optimizers=(optimizer, lr_scheduler),
+    compute_metrics=compute_metrics,
+    callbacks=[EarlyStoppingCallback(early_stopping_patience=20)]
 )
 
 trainer.train()
