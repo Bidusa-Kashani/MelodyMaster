@@ -7,7 +7,7 @@ from datasets import Dataset, ClassLabel
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, top_k_accuracy_score
 from sklearn.model_selection import train_test_split
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, TrainingArguments, Trainer, AdamW, \
-    get_linear_schedule_with_warmup, default_data_collator, EarlyStoppingCallback
+    get_linear_schedule_with_warmup, default_data_collator
 
 warnings.filterwarnings("ignore")
 np.random.seed(42)
@@ -15,6 +15,7 @@ np.random.seed(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 df = pd.read_csv("train.csv")
+
 
 def tokenize(batch):
     tokens = alephbert_tokenizer(batch['lyrics'], padding=True, truncation=True, max_length=512)
@@ -34,7 +35,6 @@ def compute_metrics(pred):
         'f1_macro': f1_score(labels, preds, average='macro'),
         'f1_weighted': f1_score(labels, preds, average='weighted'),
     }
-
 
 
 lyricists = df['lyricist'].to_list()
@@ -76,9 +76,9 @@ args = TrainingArguments(
     do_eval=True,
     evaluation_strategy="epoch",
     save_strategy="epoch",
-    eval_steps=10,
-    save_steps=100,
-    logging_steps=10,
+    eval_steps=1,
+    save_steps=1000,
+    logging_steps=1,
     save_total_limit=5,
     load_best_model_at_end=True,
     metric_for_best_model="f1_weighted",
@@ -94,8 +94,9 @@ args = TrainingArguments(
 )
 
 optimizer = AdamW(alephbert.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps,
-                                               num_training_steps=args.max_steps)
+lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_ratio * args.num_train_epochs * 137,
+                                               num_training_steps=args.num_train_epochs * 137)
+# 137 is the number of batches in the training set
 
 trainer = Trainer(
     model=alephbert,
@@ -106,7 +107,7 @@ trainer = Trainer(
     data_collator=default_data_collator,
     optimizers=(optimizer, lr_scheduler),
     compute_metrics=compute_metrics,
-    #callbacks=[EarlyStoppingCallback(early_stopping_patience=1000)]
+    # callbacks=[EarlyStoppingCallback(early_stopping_patience=1000)]
 )
 
 trainer.train()
