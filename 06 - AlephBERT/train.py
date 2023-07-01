@@ -115,4 +115,4 @@ trainer = Trainer(
     callbacks=[EarlyStoppingCallback(early_stopping_patience=3000)]
 )
 
-trainer.train(resume_from_checkpoint=True)
+trainer.train(resume_from_checkpoint=False)
