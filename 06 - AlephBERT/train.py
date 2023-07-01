@@ -1,5 +1,4 @@
 import warnings
-
 import numpy as np
 import pandas as pd
 import torch
@@ -7,7 +6,7 @@ from datasets import Dataset, ClassLabel
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, top_k_accuracy_score
 from sklearn.model_selection import train_test_split
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, TrainingArguments, Trainer, AdamW, \
-    get_linear_schedule_with_warmup, default_data_collator
+    get_linear_schedule_with_warmup, default_data_collator, EarlyStoppingCallback
 
 warnings.filterwarnings("ignore")
 np.random.seed(42)
@@ -65,7 +64,7 @@ val_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'
 for p in alephbert.bert.embeddings.parameters():
     p.requires_grad = False
 
-for p in alephbert.bert.encoder.layer[:8].parameters():
+for p in alephbert.bert.encoder.layer[:3].parameters():
     p.requires_grad = False
 
 alephbert.to(device)
@@ -76,16 +75,16 @@ args = TrainingArguments(
     do_eval=True,
     evaluation_strategy="epoch",
     save_strategy="epoch",
-    eval_steps=20,
-    save_steps=1000,
-    logging_steps=20,
+    eval_steps=10,
+    save_steps=20,
+    logging_steps=10,
     save_total_limit=5,
     load_best_model_at_end=True,
-    metric_for_best_model="f1_weighted",
-    num_train_epochs=1000,
-    per_device_train_batch_size=32,
+    metric_for_best_model="top_5_accuracy",
+    num_train_epochs=100,
+    per_device_train_batch_size=16,
     per_device_eval_batch_size=16,
-    learning_rate=5e-5,
+    learning_rate=2.5e-5,
     weight_decay=0.01,
     warmup_ratio=0.1,
     logging_dir="logs",
@@ -93,10 +92,11 @@ args = TrainingArguments(
     seed=42,
 )
 
+BATCHES_PER_EPOCH = len(train_dataset) // args.per_device_train_batch_size + (1 if len(train_dataset) % args.per_device_train_batch_size else 0)
+
 optimizer = AdamW(alephbert.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_ratio * args.num_train_epochs * 137,
-                                               num_training_steps=args.num_train_epochs * 137)
-# 137 is the number of batches in the training set
+lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_ratio * args.num_train_epochs * BATCHES_PER_EPOCH,
+                                               num_training_steps=args.num_train_epochs * BATCHES_PER_EPOCH)
 
 trainer = Trainer(
     model=alephbert,
@@ -107,7 +107,7 @@ trainer = Trainer(
     data_collator=default_data_collator,
     optimizers=(optimizer, lr_scheduler),
     compute_metrics=compute_metrics,
-    # callbacks=[EarlyStoppingCallback(early_stopping_patience=1000)]
+    callbacks=[EarlyStoppingCallback(early_stopping_patience=3000)]
 )
 
-trainer.train()
+trainer.train(resume_from_checkpoint=False)
