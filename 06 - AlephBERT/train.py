@@ -61,11 +61,16 @@ val_dataset = val_dataset.map(tokenize, batched=True)
 train_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'])
 val_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'])
 
+
 for p in alephbert.bert.embeddings.parameters():
     p.requires_grad = False
 
-for p in alephbert.bert.encoder.layer[:3].parameters():
+for p in alephbert.bert.encoder.layer[:1].parameters():
     p.requires_grad = False
+
+for name, module in alephbert.bert.named_modules():
+    if "dropout" in name and "embeddings" not in name and "encoder.layer.0" not in name:
+        module.p = 0.5
 
 alephbert.to(device)
 
