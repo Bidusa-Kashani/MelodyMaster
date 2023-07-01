@@ -65,12 +65,12 @@ val_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'
 for p in alephbert.bert.embeddings.parameters():
     p.requires_grad = False
 
-for p in alephbert.bert.encoder.layer[:1].parameters():
+for p in alephbert.bert.encoder.layer[:3].parameters():
     p.requires_grad = False
 
 for name, module in alephbert.bert.named_modules():
-    if "dropout" in name and "embeddings" not in name and "encoder.layer.0" not in name:
-        module.p = 0.5
+    if isinstance(module, torch.nn.Dropout) and not ("embeddings" in name or "encoder.layer.0." in name or "encoder.layer.1." in name or "encoder.layer.2." in name):
+        module.p = 0.3
 
 alephbert.to(device)
 
