@@ -1,4 +1,5 @@
 import warnings
+
 import numpy as np
 import pandas as pd
 import torch
@@ -18,6 +19,7 @@ df = pd.read_csv("train.csv")
 
 def tokenize(batch):
     tokens = alephbert_tokenizer(batch['lyrics'], padding=True, truncation=True, max_length=512)
+
     tokens['labels'] = labels.str2int(batch['lyricist'])
     return tokens
 
@@ -61,21 +63,21 @@ val_dataset = val_dataset.map(tokenize, batched=True)
 train_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'])
 val_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'])
 
-
 for p in alephbert.bert.embeddings.parameters():
     p.requires_grad = False
 
-for p in alephbert.bert.encoder.layer[:3].parameters():
+for p in alephbert.bert.encoder.parameters():
     p.requires_grad = False
 
 for name, module in alephbert.bert.named_modules():
-    if isinstance(module, torch.nn.Dropout) and not ("embeddings" in name or "encoder.layer.0." in name or "encoder.layer.1." in name or "encoder.layer.2." in name):
-        module.p = 0.3
+    if isinstance(module, torch.nn.Dropout) and not (
+            "embeddings" in name or "encoder.layer." in name):
+        module.p = 0.5
 
 alephbert.to(device)
 
 args = TrainingArguments(
-    "output",
+    "output6",
     do_train=True,
     do_eval=True,
     evaluation_strategy="epoch",
@@ -86,21 +88,23 @@ args = TrainingArguments(
     save_total_limit=3,
     load_best_model_at_end=True,
     metric_for_best_model="top_5_accuracy",
-    num_train_epochs=50,
-    per_device_train_batch_size=16,
+    num_train_epochs=100,
+    per_device_train_batch_size=32,
     per_device_eval_batch_size=16,
-    learning_rate=2.5e-5,
+    learning_rate=5e-5,
     weight_decay=0.01,
     warmup_ratio=0.1,
-    logging_dir="logs",
-    fp16=True,
+    logging_dir="logs6",
+    fp16=False,
     seed=42,
 )
 
-BATCHES_PER_EPOCH = len(train_dataset) // args.per_device_train_batch_size + (1 if len(train_dataset) % args.per_device_train_batch_size else 0)
+BATCHES_PER_EPOCH = len(train_dataset) // args.per_device_train_batch_size + (
+    1 if len(train_dataset) % args.per_device_train_batch_size else 0)
 
 optimizer = AdamW(alephbert.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_ratio * args.num_train_epochs * BATCHES_PER_EPOCH,
+lr_scheduler = get_linear_schedule_with_warmup(optimizer,
+                                               num_warmup_steps=args.warmup_ratio * args.num_train_epochs * BATCHES_PER_EPOCH,
                                                num_training_steps=args.num_train_epochs * BATCHES_PER_EPOCH)
 
 trainer = Trainer(
