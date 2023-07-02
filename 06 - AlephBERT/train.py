@@ -3,6 +3,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import torch
+from torch import nn
 from datasets import Dataset, ClassLabel
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, top_k_accuracy_score
 from sklearn.model_selection import train_test_split
@@ -57,6 +58,13 @@ alephbert = AutoModelForSequenceClassification.from_pretrained("onlplab/alephber
                                                                label2id={label: i for i, label in
                                                                          enumerate(labels.names)})
 
+alephbert.classifier = nn.Sequential(
+    nn.Linear(in_features=768, out_features=384, bias=True),
+    nn.Tanh(),
+    nn.Dropout(p=0.5, inplace=False),
+    nn.Linear(in_features=384, out_features=labels.num_classes, bias=True)
+)
+
 train_dataset = train_dataset.map(tokenize, batched=True)
 val_dataset = val_dataset.map(tokenize, batched=True)
 
@@ -77,7 +85,7 @@ for name, module in alephbert.bert.named_modules():
 alephbert.to(device)
 
 args = TrainingArguments(
-    "output6",
+    "output7",
     do_train=True,
     do_eval=True,
     evaluation_strategy="epoch",
@@ -94,7 +102,7 @@ args = TrainingArguments(
     learning_rate=5e-5,
     weight_decay=0.01,
     warmup_ratio=0.1,
-    logging_dir="logs6",
+    logging_dir="logs7",
     fp16=False,
     seed=42,
 )
