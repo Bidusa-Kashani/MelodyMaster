@@ -3,6 +3,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn as nn
 from datasets import Dataset, ClassLabel
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, top_k_accuracy_score
 from sklearn.model_selection import train_test_split
@@ -16,11 +17,13 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 df = pd.read_csv("train.csv")
 
+df = df.groupby('artist').filter(lambda x: len(x) > 25)
+
 
 def tokenize(batch):
     tokens = alephbert_tokenizer(batch['lyrics'], padding=True, truncation=True, max_length=512)
 
-    tokens['labels'] = labels.str2int(batch['lyricist'])
+    tokens['labels'] = labels.str2int(batch['artist'])
     return tokens
 
 
@@ -38,20 +41,20 @@ def compute_metrics(pred):
     }
 
 
-lyricists = df['lyricist'].to_list()
+artists = df['artist'].to_list()
 lyrics = df['lyrics'].to_list()
 
-X_train, X_val, y_train, y_val = train_test_split(lyrics, lyricists, test_size=0.15, stratify=lyricists)
-train_df = pd.DataFrame(np.c_[X_train, y_train], columns=['lyrics', 'lyricist'])
-val_df = pd.DataFrame(np.c_[X_val, y_val], columns=['lyrics', 'lyricist'])
+X_train, X_val, y_train, y_val = train_test_split(lyrics, artists, test_size=0.15, stratify=artists)
+train_df = pd.DataFrame(np.c_[X_train, y_train], columns=['lyrics', 'artist'])
+val_df = pd.DataFrame(np.c_[X_val, y_val], columns=['lyrics', 'artist'])
 
-labels = ClassLabel(names=df["lyricist"].unique().tolist())
+labels = ClassLabel(names=df["artist"].unique().tolist())
 train_dataset = Dataset.from_pandas(train_df)
 val_dataset = Dataset.from_pandas(val_df)
 
 alephbert_tokenizer = AutoTokenizer.from_pretrained('onlplab/alephbert-base')
 alephbert = AutoModelForSequenceClassification.from_pretrained("onlplab/alephbert-base",
-                                                               num_labels=len(df["lyricist"].unique()),
+                                                               num_labels=len(df["artist"].unique()),
                                                                id2label={i: label for i, label in
                                                                          enumerate(labels.names)},
                                                                label2id={label: i for i, label in
@@ -63,6 +66,7 @@ val_dataset = val_dataset.map(tokenize, batched=True)
 train_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'])
 val_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'])
 
+
 for p in alephbert.bert.embeddings.parameters():
     p.requires_grad = False
 
@@ -73,14 +77,13 @@ for p in alephbert.bert.encoder.layer[-1].parameters():
     p.requires_grad = True
 
 for name, module in alephbert.bert.named_modules():
-    if isinstance(module, torch.nn.Dropout) and (
-            not ("embeddings" in name or "encoder.layer." in name) or "encoder.layer.11" in name):
+    if isinstance(module, torch.nn.Dropout) and (not ("embeddings" in name or "encoder.layer." in name) or "encoder.layer.11" in name):
         module.p = 0.5
 
 alephbert.to(device)
 
 args = TrainingArguments(
-    "output5",
+    "artists_output",
     do_train=True,
     do_eval=True,
     evaluation_strategy="epoch",
@@ -97,7 +100,7 @@ args = TrainingArguments(
     learning_rate=5e-5,
     weight_decay=0.01,
     warmup_ratio=0.1,
-    logging_dir="logs5",
+    logging_dir="artists_logs",
     fp16=False,
     seed=42,
 )
@@ -122,10 +125,4 @@ trainer = Trainer(
     callbacks=[EarlyStoppingCallback(early_stopping_patience=3000)]
 )
 
-trainer.train(resume_from_checkpoint=True)
-
-trainer.save_model("output5")
-trainer.save_state()
-
-alephbert_tokenizer.save_pretrained("output5")
-alephbert.save_pretrained("output5")
+trainer.train(resume_from_checkpoint=False)
